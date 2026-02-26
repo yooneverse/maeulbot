@@ -9,7 +9,6 @@ on:
     - cron: '0  6  * * 1-5'  # 15:00 KST
     - cron: '20 8  * * 1-5'  # 17:20 KST
     - cron: '40 8  * * 1-5'  # 17:40 KST
-  workflow_dispatch:  # 버튼은 있어도 "전송은 안 함" (검증/로그 확인용)
 
 jobs:
   send:
