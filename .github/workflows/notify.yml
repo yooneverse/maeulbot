@@ -35,10 +35,10 @@ jobs:
             local t="$1"
             case "$t" in
               "23:50")
-                echo "🏁 좋은 아침입니다! 지금 바로 입실 체크해주세요 :slightly_smiling_face:"
+                echo "좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
                 ;;
               "00:30")
-                echo -e "📋 스크럼 작성 시간입니다!\n오늘의 계획을 간단히 작성해주세요 :memo:"
+                echo -e "스크럼 작성 시간입니다!\n오늘의 계획을 공유해주세요 :memo:"
                 ;;
               "06:00")
                 STRETCHES=(
@@ -56,7 +56,7 @@ jobs:
                 echo -e "${STRETCHES[$IDX]}"
                 ;;
               "08:20")
-                echo -e "📝 오늘의 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:"
+                echo -e "오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:"
                 ;;
               *)
                 return 1
