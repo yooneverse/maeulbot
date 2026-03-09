@@ -71,36 +71,35 @@ jobs:
           }
 
           pick_message() {
-            # 수동 실행
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
               MESSAGE_KEY="manual-test"
               MSG="🧪 maeulbot 수동 테스트입니다. 웹훅 연결과 워크플로 동작을 확인했어요."
               return 0
             fi
 
-            # cron 트리거: KST 시간으로 어떤 알림인지 판단
-            NOW_HM="$(TZ=Asia/Seoul date '+%H:%M')"
+            NOW_UTC_HM="$(date -u '+%H:%M')"
+            echo "UTC HM: $NOW_UTC_HM"
 
-            case "$NOW_HM" in
-              08:4*|08:5*)
+            case "$NOW_UTC_HM" in
+              23:4*|23:5*)
                 MESSAGE_KEY="checkin"
                 MSG="좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
                 ;;
-              09:2*|09:3*)
+              00:2*|00:3*)
                 MESSAGE_KEY="scrum"
                 MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
                 ;;
-              14:5*)
+              05:4*|05:5*|06:0*)
                 MESSAGE_KEY="stretch"
                 STRETCH_IDX="$(peek_stretch_index)"
                 MSG="${STRETCHES[$STRETCH_IDX]}"
                 ;;
-              17:1*|17:2*)
+              08:1*|08:2*)
                 MESSAGE_KEY="retrospect"
                 MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
                 ;;
               *)
-                echo "KST $NOW_HM: no matching message. Exit."
+                echo "UTC $NOW_UTC_HM: no matching message. Exit."
                 return 1
                 ;;
             esac
@@ -129,7 +128,6 @@ jobs:
             exit 1
           fi
 
-          # 스트레칭 큐만 커밋
           if [ "$MESSAGE_KEY" = "stretch" ]; then
             consume_stretch_index
 
