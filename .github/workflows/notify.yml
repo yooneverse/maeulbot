@@ -2,10 +2,8 @@ name: maeulbot
 
 on:
   schedule:
-    - cron: '50 23 * * 0-4'  # 08:50 KST (월~금) - 입실 마감 알림
-    - cron: '30 0 * * 1-5'   # 09:30 KST (월~금) - 스크럼 알림
-    - cron: '55 5 * * 1-5'   # 14:55 KST (월~금) - 스트레칭
-    - cron: '20 8 * * 1-5'   # 17:20 KST (월~금) - 회고 시작
+    - cron: '*/5 * * * 0-4'   # UTC 일~목 = KST 월~금, 5분마다
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -13,8 +11,6 @@ permissions:
 jobs:
   send:
     runs-on: ubuntu-latest
-    env:
-      TRIGGER_CRON: ${{ github.event.schedule }}
 
     steps:
       - name: Checkout
@@ -22,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Send Mattermost scheduled message only
+      - name: Send Mattermost scheduled message with catch-up logic
         shell: bash
         run: |
           set -euo pipefail
@@ -34,9 +30,12 @@ jobs:
 
           echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
           echo "KST now: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S')"
-          echo "Triggered by cron: ${TRIGGER_CRON:-<empty>}"
 
           QUEUE_FILE=".stretch_queue"
+          STATE_FILE=".bot_state"
+
+          TODAY="$(TZ=Asia/Seoul date '+%Y-%m-%d')"
+          NOW_HM="$(TZ=Asia/Seoul date '+%H:%M')"
 
           STRETCHES=(
             $'🧘 오늘의 스트레칭: 눈 피로 풀기\n\n개발자는 눈이죠.\n\n1. 멀리 보기 (20초)\n   모니터에서 눈을 떼고, 창문 너머 멀리 있는 것을 20초 동안 바라봅니다.\n2. 눈 천천히 굴리기 (30초)\n   눈을 감고, 위 → 오른쪽 → 아래 → 왼쪽 순서로 천천히 돌립니다.\n3. 눈 꽉 감았다 크게 뜨기 (10회)\n   눈을 꽉 감았다가 크게 뜨기를 10번 반복합니다.\n4. 손바닥으로 눈 덮기 (30초)\n   양손을 비벼 따뜻하게 만든 뒤, 눈 위에 살짝 올려놓고 쉽니다.\n\n무리하지 말고 천천히! 몸이 불편하면 바로 멈추세요 🙂'
@@ -50,7 +49,7 @@ jobs:
             $'🧘 오늘의 스트레칭: 하지 풀기\n\n오래 앉아 있으면 뭉치기 쉬운 허벅지·종아리·무릎 주변을 풀어줍니다!\n\n1. 허벅지 앞쪽 늘리기 (15초 × 양쪽)\n   의자 옆에 서서 한 손으로 등받이를 잡고, 반대 손으로 발목을 잡아 발꿈치를 엉덩이 쪽으로 당깁니다.\n2. 허벅지 뒤쪽 늘리기 (15초 × 양쪽)\n   의자에 앉아 한쪽 다리를 앞으로 쭉 뻗고, 발끝을 세운 채 상체를 천천히 앞으로 숙입니다.\n3. 종아리 늘리기 (15초 × 양쪽)\n   의자 등받이를 두 손으로 잡고, 한 발을 뒤로 뻗어 뒤꿈치를 바닥에 붙인 채 앞 무릎을 살짝 구부립니다.\n4. 무릎 천천히 펴고 접기 (10회 × 양쪽)\n   의자에 앉아 한쪽 다리를 들어 천천히 무릎을 펴고, 다시 천천히 접습니다.\n\n무리하지 말고 천천히! 몸이 불편하면 바로 멈추세요 🙂'
           )
 
-          ensure_queue () {
+          ensure_queue() {
             local n="${#STRETCHES[@]}"
 
             if [ "$n" -le 0 ]; then
@@ -63,7 +62,7 @@ jobs:
             fi
           }
 
-          pop_stretch_message () {
+          pop_stretch_message() {
             ensure_queue
 
             local idx
@@ -90,51 +89,80 @@ jobs:
             printf "%s" "${STRETCHES[$idx]}"
           }
 
-          pick_message_by_cron () {
-            local cron_expr="$1"
-
-            case "$cron_expr" in
-              '50 23 * * 0-4')
-                printf "%s" "좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
-                ;;
-              '30 0 * * 1-5')
-                printf "%b" "스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:"
-                ;;
-              '55 5 * * 1-5')
-                pop_stretch_message
-                ;;
-              '20 8 * * 1-5')
-                printf "%b" "오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:"
-                ;;
-              *)
-                return 1
-                ;;
-            esac
+          init_state() {
+            touch "$STATE_FILE"
           }
 
-          if ! MSG="$(pick_message_by_cron "${TRIGGER_CRON}")"; then
-            echo "Unknown schedule trigger: ${TRIGGER_CRON}"
-            exit 1
+          already_sent_today() {
+            local key="$1"
+            grep -q "^${TODAY}|${key}$" "$STATE_FILE" 2>/dev/null
+          }
+
+          mark_sent_today() {
+            local key="$1"
+            echo "${TODAY}|${key}" >> "$STATE_FILE"
+          }
+
+          time_reached() {
+            local target="$1"
+            [[ "$NOW_HM" > "$target" || "$NOW_HM" == "$target" ]]
+          }
+
+          pick_due_message() {
+            # 하루에 각 메시지는 1번만 전송
+            # 순서대로 검사해서 가장 먼저 걸리는 1개만 보냄
+
+            if time_reached "08:50" && ! already_sent_today "checkin"; then
+              mark_sent_today "checkin"
+              printf "%s" "좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
+              return 0
+            fi
+
+            if time_reached "09:30" && ! already_sent_today "scrum"; then
+              mark_sent_today "scrum"
+              printf "%b" "스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:"
+              return 0
+            fi
+
+            if time_reached "14:55" && ! already_sent_today "stretch"; then
+              mark_sent_today "stretch"
+              pop_stretch_message
+              return 0
+            fi
+
+            if time_reached "17:20" && ! already_sent_today "retrospect"; then
+              mark_sent_today "retrospect"
+              printf "%b" "오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:"
+              return 0
+            fi
+
+            return 1
+          }
+
+          init_state
+
+          if ! MSG="$(pick_due_message)"; then
+            echo "No due message now. Exit without sending."
+            exit 0
           fi
 
-          if [ "${TRIGGER_CRON}" = '55 5 * * 1-5' ]; then
-            echo "Updating stretch queue file (persist state)..."
-            git config user.name "maeulbot"
-            git config user.email "maeulbot@users.noreply.github.com"
+          echo "Updating state files..."
+          git config user.name "maeulbot"
+          git config user.email "maeulbot@users.noreply.github.com"
 
-            git add "$QUEUE_FILE" || true
+          git add "$STATE_FILE" "$QUEUE_FILE" || true
 
-            if git diff --cached --quiet; then
-              echo "No queue changes to commit."
-            else
-              git commit -m "chore: rotate stretch queue" || true
-              git push || true
-            fi
+          if git diff --cached --quiet; then
+            echo "No state changes to commit."
+          else
+            git commit -m "chore: update bot state" || true
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            git push || true
           fi
 
           echo "Sending message..."
           export MSG
-          PAYLOAD=$(python3 -c 'import json,os; print(json.dumps({"text": os.environ["MSG"], "username":"maeulbot"}))')
+          PAYLOAD=$(python3 -c 'import json, os; print(json.dumps({"text": os.environ["MSG"], "username": "maeulbot"}))')
 
           HTTP_CODE=$(curl -sS -o response.txt -w "%{http_code}" \
             -X POST "${{ secrets.WEBHOOK_URL }}" \
