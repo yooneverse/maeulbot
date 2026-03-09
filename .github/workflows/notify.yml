@@ -2,7 +2,10 @@ name: maeulbot
 
 on:
   schedule:
-    - cron: '* * * * *'   # 매분 실행, 주말은 코드에서 KST 기준 차단
+    - cron: '50 23 * * 0-4'   # KST 08:50 월~금
+    - cron: '28  0 * * 1-5'   # KST 09:28 월~금
+    - cron: '55  5 * * 1-5'   # KST 14:55 월~금
+    - cron: '18  8 * * 1-5'   # KST 17:18 월~금
   workflow_dispatch:
 
 permissions:
@@ -18,28 +21,16 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Send Mattermost scheduled message with catch-up logic
+      - name: Send Mattermost scheduled message
         shell: bash
         run: |
           set -euo pipefail
 
           echo "EVENT_NAME=${GITHUB_EVENT_NAME}"
-          echo "REF_NAME=${GITHUB_REF_NAME}"
           echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
           echo "KST now: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S')"
 
           QUEUE_FILE=".stretch_queue"
-          STATE_FILE=".bot_state"
-
-          TODAY="$(TZ=Asia/Seoul date '+%Y-%m-%d')"
-          NOW_HM="$(TZ=Asia/Seoul date '+%H:%M')"
-
-          # 주말 차단 (KST 기준, 6=토 7=일)
-          DOW="$(TZ=Asia/Seoul date '+%u')"
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && [ "$DOW" -ge 6 ]; then
-            echo "Weekend (KST). Skip."
-            exit 0
-          fi
 
           STRETCHES=(
             $'🧘 오늘의 스트레칭: 눈 피로 풀기\n\n개발자는 눈이죠.\n\n1. 멀리 보기 (20초)\n   모니터에서 눈을 떼고, 창문 너머 멀리 있는 것을 20초 동안 바라봅니다.\n2. 눈 천천히 굴리기 (30초)\n   눈을 감고, 위 → 오른쪽 → 아래 → 왼쪽 순서로 천천히 돌립니다.\n3. 눈 꽉 감았다 크게 뜨기 (10회)\n   눈을 꽉 감았다가 크게 뜨기를 10번 반복합니다.\n4. 손바닥으로 눈 덮기 (30초)\n   양손을 비벼 따뜻하게 만든 뒤, 눈 위에 살짝 올려놓고 쉽니다.\n\n무리하지 말고 천천히! 몸이 불편하면 바로 멈추세요 🙂'
@@ -56,7 +47,6 @@ jobs:
           ensure_queue() {
             local n="${#STRETCHES[@]}"
             [ "$n" -gt 0 ] || { echo "STRETCHES empty"; exit 1; }
-
             if [ ! -f "$QUEUE_FILE" ] || [ ! -s "$QUEUE_FILE" ]; then
               shuf -i "0-$((n - 1))" > "$QUEUE_FILE"
             fi
@@ -66,13 +56,11 @@ jobs:
             ensure_queue
             local idx
             idx="$(head -n 1 "$QUEUE_FILE")"
-
             if ! [[ "$idx" =~ ^[0-9]+$ ]] || [ "$idx" -ge "${#STRETCHES[@]}" ]; then
               rm -f "$QUEUE_FILE"
               ensure_queue
               idx="$(head -n 1 "$QUEUE_FILE")"
             fi
-
             printf "%s" "$idx"
           }
 
@@ -82,68 +70,43 @@ jobs:
             ensure_queue
           }
 
-          init_state() {
-            touch "$STATE_FILE"
-          }
-
-          already_sent_today() {
-            local key="$1"
-            grep -q "^${TODAY}|${key}$" "$STATE_FILE" 2>/dev/null
-          }
-
-          mark_sent_today() {
-            local key="$1"
-            echo "${TODAY}|${key}" >> "$STATE_FILE"
-          }
-
-          time_reached() {
-            local target="$1"
-            [[ "$NOW_HM" > "$target" || "$NOW_HM" == "$target" ]]
-          }
-
-          pick_due_message() {
+          pick_message() {
+            # 수동 실행
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
               MESSAGE_KEY="manual-test"
               MSG="🧪 maeulbot 수동 테스트입니다. 웹훅 연결과 워크플로 동작을 확인했어요."
               return 0
             fi
 
-            if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-              return 1
-            fi
+            # cron 트리거: KST 시간으로 어떤 알림인지 판단
+            NOW_HM="$(TZ=Asia/Seoul date '+%H:%M')"
 
-            if time_reached "08:50" && ! already_sent_today "checkin"; then
-              MESSAGE_KEY="checkin"
-              MSG="좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
-              return 0
-            fi
-
-            if time_reached "09:28" && ! already_sent_today "scrum"; then
-              MESSAGE_KEY="scrum"
-              MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
-              return 0
-            fi
-
-            if time_reached "14:55" && ! already_sent_today "stretch"; then
-              MESSAGE_KEY="stretch"
-              STRETCH_IDX="$(peek_stretch_index)"
-              MSG="${STRETCHES[$STRETCH_IDX]}"
-              return 0
-            fi
-
-            if time_reached "17:18" && ! already_sent_today "retrospect"; then
-              MESSAGE_KEY="retrospect"
-              MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
-              return 0
-            fi
-
-            return 1
+            case "$NOW_HM" in
+              08:4*|08:5*)
+                MESSAGE_KEY="checkin"
+                MSG="좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
+                ;;
+              09:2*|09:3*)
+                MESSAGE_KEY="scrum"
+                MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
+                ;;
+              14:5*)
+                MESSAGE_KEY="stretch"
+                STRETCH_IDX="$(peek_stretch_index)"
+                MSG="${STRETCHES[$STRETCH_IDX]}"
+                ;;
+              17:1*|17:2*)
+                MESSAGE_KEY="retrospect"
+                MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
+                ;;
+              *)
+                echo "KST $NOW_HM: no matching message. Exit."
+                return 1
+                ;;
+            esac
           }
 
-          init_state
-
-          if ! pick_due_message; then
-            echo "No due message now. Exit without sending."
+          if ! pick_message; then
             exit 0
           fi
 
@@ -162,26 +125,22 @@ jobs:
           cat response.txt || true
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Webhook send failed. Do not mark as sent."
+            echo "Webhook send failed."
             exit 1
           fi
 
-          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
-            mark_sent_today "$MESSAGE_KEY"
-
-            if [ "$MESSAGE_KEY" = "stretch" ]; then
-              consume_stretch_index
-            fi
+          # 스트레칭 큐만 커밋
+          if [ "$MESSAGE_KEY" = "stretch" ]; then
+            consume_stretch_index
 
             git config user.name "maeulbot"
             git config user.email "maeulbot@users.noreply.github.com"
-
-            git add "$STATE_FILE" "$QUEUE_FILE" || true
+            git add "$QUEUE_FILE" || true
 
             if git diff --cached --quiet; then
-              echo "No state changes to commit."
+              echo "No queue changes to commit."
             else
-              git commit -m "chore: update bot state" || true
+              git commit -m "chore: update stretch queue" || true
               git pull --rebase origin "${GITHUB_REF_NAME}" || true
               git push || true
             fi
