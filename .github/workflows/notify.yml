@@ -2,7 +2,7 @@ name: maeulbot
 
 on:
   schedule:
-    - cron: '*/5 * * * 0-4'   # UTC 일~목 = KST 월~금, 5분마다
+    - cron: '* * * * *'   # 매분 실행, 주말은 코드에서 KST 기준 차단
   workflow_dispatch:
 
 permissions:
@@ -33,6 +33,13 @@ jobs:
 
           TODAY="$(TZ=Asia/Seoul date '+%Y-%m-%d')"
           NOW_HM="$(TZ=Asia/Seoul date '+%H:%M')"
+
+          # 주말 차단 (KST 기준, 6=토 7=일)
+          DOW="$(TZ=Asia/Seoul date '+%u')"
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ] && [ "$DOW" -ge 6 ]; then
+            echo "Weekend (KST). Skip."
+            exit 0
+          fi
 
           STRETCHES=(
             $'🧘 오늘의 스트레칭: 눈 피로 풀기\n\n개발자는 눈이죠.\n\n1. 멀리 보기 (20초)\n   모니터에서 눈을 떼고, 창문 너머 멀리 있는 것을 20초 동안 바라봅니다.\n2. 눈 천천히 굴리기 (30초)\n   눈을 감고, 위 → 오른쪽 → 아래 → 왼쪽 순서로 천천히 돌립니다.\n3. 눈 꽉 감았다 크게 뜨기 (10회)\n   눈을 꽉 감았다가 크게 뜨기를 10번 반복합니다.\n4. 손바닥으로 눈 덮기 (30초)\n   양손을 비벼 따뜻하게 만든 뒤, 눈 위에 살짝 올려놓고 쉽니다.\n\n무리하지 말고 천천히! 몸이 불편하면 바로 멈추세요 🙂'
@@ -95,14 +102,12 @@ jobs:
           }
 
           pick_due_message() {
-            # 수동 실행은 테스트 메시지 전송
             if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
               MESSAGE_KEY="manual-test"
               MSG="🧪 maeulbot 수동 테스트입니다. 웹훅 연결과 워크플로 동작을 확인했어요."
               return 0
             fi
 
-            # schedule 외 이벤트는 종료
             if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
               return 1
             fi
@@ -113,7 +118,7 @@ jobs:
               return 0
             fi
 
-            if time_reached "09:30" && ! already_sent_today "scrum"; then
+            if time_reached "09:28" && ! already_sent_today "scrum"; then
               MESSAGE_KEY="scrum"
               MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
               return 0
@@ -126,7 +131,7 @@ jobs:
               return 0
             fi
 
-            if time_reached "17:20" && ! already_sent_today "retrospect"; then
+            if time_reached "17:18" && ! already_sent_today "retrospect"; then
               MESSAGE_KEY="retrospect"
               MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
               return 0
@@ -161,7 +166,6 @@ jobs:
             exit 1
           fi
 
-          # 전송 성공 후에만 상태 반영
           if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
             mark_sent_today "$MESSAGE_KEY"
 
