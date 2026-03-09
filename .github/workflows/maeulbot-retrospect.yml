@@ -1,0 +1,34 @@
+name: maeulbot-retrospect
+
+on:
+  schedule:
+    - cron: '18 8 * * 1-5'   # KST 17:18 월~금
+  workflow_dispatch:
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send retrospect message
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
+
+          export MSG
+          PAYLOAD=$(python3 -c 'import json, os; print(json.dumps({"text": os.environ["MSG"], "username": "maeulbot"}))')
+
+          HTTP_CODE=$(curl -sS -o response.txt -w "%{http_code}" \
+            -X POST "${{ secrets.WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d "$PAYLOAD")
+
+          echo "HTTP_CODE=$HTTP_CODE"
+          cat response.txt || true
+
+          if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Webhook send failed." >&2
+            exit 1
+          fi

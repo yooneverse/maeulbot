@@ -1,11 +1,8 @@
-name: maeulbot
+name: maeulbot-stretch
 
 on:
   schedule:
-    - cron: '50 23 * * 0-4'   # KST 08:50 월~금
-    - cron: '28  0 * * 1-5'   # KST 09:28 월~금
-    - cron: '55  5 * * 1-5'   # KST 14:55 월~금
-    - cron: '18  8 * * 1-5'   # KST 17:18 월~금
+    - cron: '55 5 * * 1-5'   # KST 14:55 월~금
   workflow_dispatch:
 
 permissions:
@@ -21,14 +18,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Send Mattermost scheduled message
+      - name: Send stretch message
         shell: bash
         run: |
           set -euo pipefail
-
-          echo "EVENT_NAME=${GITHUB_EVENT_NAME}"
-          echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
-          echo "KST now: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S')"
 
           QUEUE_FILE=".stretch_queue"
 
@@ -46,7 +39,7 @@ jobs:
 
           ensure_queue() {
             local n="${#STRETCHES[@]}"
-            [ "$n" -gt 0 ] || { echo "STRETCHES empty"; exit 1; }
+            [ "$n" -gt 0 ] || { echo "STRETCHES empty" >&2; exit 1; }
             if [ ! -f "$QUEUE_FILE" ] || [ ! -s "$QUEUE_FILE" ]; then
               shuf -i "0-$((n - 1))" > "$QUEUE_FILE"
             fi
@@ -57,6 +50,7 @@ jobs:
             local idx
             idx="$(head -n 1 "$QUEUE_FILE")"
             if ! [[ "$idx" =~ ^[0-9]+$ ]] || [ "$idx" -ge "${#STRETCHES[@]}" ]; then
+              echo "Invalid queue index '$idx', regenerating queue." >&2
               rm -f "$QUEUE_FILE"
               ensure_queue
               idx="$(head -n 1 "$QUEUE_FILE")"
@@ -65,56 +59,24 @@ jobs:
           }
 
           consume_stretch_index() {
-            tail -n +2 "$QUEUE_FILE" > "${QUEUE_FILE}.tmp" || true
-            mv "${QUEUE_FILE}.tmp" "$QUEUE_FILE"
+            local tmp
+            tmp="$(mktemp "${QUEUE_FILE}.XXXXXX")"
+            tail -n +2 "$QUEUE_FILE" > "$tmp" || true
+            mv "$tmp" "$QUEUE_FILE"
             ensure_queue
           }
 
-          pick_message() {
-            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
-              MESSAGE_KEY="manual-test"
-              MSG="🧪 maeulbot 수동 테스트입니다. 웹훅 연결과 워크플로 동작을 확인했어요."
-              return 0
-            fi
-
-            NOW_UTC_HM="$(date -u '+%H:%M')"
-            echo "UTC HM: $NOW_UTC_HM"
-
-            case "$NOW_UTC_HM" in
-              23:4*|23:5*)
-                MESSAGE_KEY="checkin"
-                MSG="좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
-                ;;
-              00:2*|00:3*)
-                MESSAGE_KEY="scrum"
-                MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
-                ;;
-              05:4*|05:5*|06:0*)
-                MESSAGE_KEY="stretch"
-                STRETCH_IDX="$(peek_stretch_index)"
-                MSG="${STRETCHES[$STRETCH_IDX]}"
-                ;;
-              08:1*|08:2*)
-                MESSAGE_KEY="retrospect"
-                MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
-                ;;
-              *)
-                echo "UTC $NOW_UTC_HM: no matching message. Exit."
-                return 1
-                ;;
-            esac
-          }
-
-          if ! pick_message; then
-            exit 0
+          STRETCH_IDX="$(peek_stretch_index)"
+          if [ "$STRETCH_IDX" -ge "${#STRETCHES[@]}" ]; then
+            echo "STRETCH_IDX $STRETCH_IDX out of range." >&2
+            exit 1
           fi
-
-          echo "MESSAGE_KEY=$MESSAGE_KEY"
+          MSG="${STRETCHES[$STRETCH_IDX]}"
 
           export MSG
           PAYLOAD=$(python3 -c 'import json, os; print(json.dumps({"text": os.environ["MSG"], "username": "maeulbot"}))')
 
-          echo "Sending message..."
+          echo "Sending stretch message (index: $STRETCH_IDX)..."
           HTTP_CODE=$(curl -sS -o response.txt -w "%{http_code}" \
             -X POST "${{ secrets.WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
@@ -124,22 +86,21 @@ jobs:
           cat response.txt || true
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
-            echo "Webhook send failed."
+            echo "Webhook send failed." >&2
             exit 1
           fi
 
-          if [ "$MESSAGE_KEY" = "stretch" ]; then
-            consume_stretch_index
+          # 전송 성공 후에만 큐 소비 및 커밋
+          consume_stretch_index
 
-            git config user.name "maeulbot"
-            git config user.email "maeulbot@users.noreply.github.com"
-            git add "$QUEUE_FILE" || true
+          git config user.name "maeulbot"
+          git config user.email "maeulbot@users.noreply.github.com"
+          git add "$QUEUE_FILE"
 
-            if git diff --cached --quiet; then
-              echo "No queue changes to commit."
-            else
-              git commit -m "chore: update stretch queue" || true
-              git pull --rebase origin "${GITHUB_REF_NAME}" || true
-              git push || true
-            fi
+          if git diff --cached --quiet; then
+            echo "No queue changes to commit."
+          else
+            git commit -m "chore: update stretch queue"
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push
           fi
