@@ -23,11 +23,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
-            echo "Not schedule event (${GITHUB_EVENT_NAME}). Exit without sending."
-            exit 0
-          fi
-
+          echo "EVENT_NAME=${GITHUB_EVENT_NAME}"
+          echo "REF_NAME=${GITHUB_REF_NAME}"
           echo "UTC now: $(date -u '+%Y-%m-%d %H:%M:%S')"
           echo "KST now: $(TZ=Asia/Seoul date '+%Y-%m-%d %H:%M:%S')"
 
@@ -51,42 +48,31 @@ jobs:
 
           ensure_queue() {
             local n="${#STRETCHES[@]}"
-
-            if [ "$n" -le 0 ]; then
-              echo "STRETCHES array is empty" >&2
-              return 1
-            fi
+            [ "$n" -gt 0 ] || { echo "STRETCHES empty"; exit 1; }
 
             if [ ! -f "$QUEUE_FILE" ] || [ ! -s "$QUEUE_FILE" ]; then
               shuf -i "0-$((n - 1))" > "$QUEUE_FILE"
             fi
           }
 
-          pop_stretch_message() {
+          peek_stretch_index() {
             ensure_queue
-
             local idx
             idx="$(head -n 1 "$QUEUE_FILE")"
 
-            if ! [[ "$idx" =~ ^[0-9]+$ ]]; then
-              echo "Queue corrupted (idx=$idx). Rebuilding queue..." >&2
+            if ! [[ "$idx" =~ ^[0-9]+$ ]] || [ "$idx" -ge "${#STRETCHES[@]}" ]; then
               rm -f "$QUEUE_FILE"
               ensure_queue
               idx="$(head -n 1 "$QUEUE_FILE")"
             fi
 
-            if [ "$idx" -ge "${#STRETCHES[@]}" ]; then
-              echo "Queue idx out of range (idx=$idx). Rebuilding queue..." >&2
-              rm -f "$QUEUE_FILE"
-              ensure_queue
-              idx="$(head -n 1 "$QUEUE_FILE")"
-            fi
+            printf "%s" "$idx"
+          }
 
+          consume_stretch_index() {
             tail -n +2 "$QUEUE_FILE" > "${QUEUE_FILE}.tmp" || true
             mv "${QUEUE_FILE}.tmp" "$QUEUE_FILE"
-
             ensure_queue
-            printf "%s" "${STRETCHES[$idx]}"
           }
 
           init_state() {
@@ -109,30 +95,40 @@ jobs:
           }
 
           pick_due_message() {
-            # 하루에 각 메시지는 1번만 전송
-            # 순서대로 검사해서 가장 먼저 걸리는 1개만 보냄
+            # 수동 실행은 테스트 메시지 전송
+            if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+              MESSAGE_KEY="manual-test"
+              MSG="🧪 maeulbot 수동 테스트입니다. 웹훅 연결과 워크플로 동작을 확인했어요."
+              return 0
+            fi
+
+            # schedule 외 이벤트는 종료
+            if [ "${GITHUB_EVENT_NAME}" != "schedule" ]; then
+              return 1
+            fi
 
             if time_reached "08:50" && ! already_sent_today "checkin"; then
-              mark_sent_today "checkin"
-              printf "%s" "좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
+              MESSAGE_KEY="checkin"
+              MSG="좋은 아침입니다! 늦지 않게 입실 체크해주세요 :slightly_smiling_face:"
               return 0
             fi
 
             if time_reached "09:30" && ! already_sent_today "scrum"; then
-              mark_sent_today "scrum"
-              printf "%b" "스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:"
+              MESSAGE_KEY="scrum"
+              MSG=$'스크럼 작성 시간입니다!\n오늘의 사항을 공유해주세요 :memo:'
               return 0
             fi
 
             if time_reached "14:55" && ! already_sent_today "stretch"; then
-              mark_sent_today "stretch"
-              pop_stretch_message
+              MESSAGE_KEY="stretch"
+              STRETCH_IDX="$(peek_stretch_index)"
+              MSG="${STRETCHES[$STRETCH_IDX]}"
               return 0
             fi
 
             if time_reached "17:20" && ! already_sent_today "retrospect"; then
-              mark_sent_today "retrospect"
-              printf "%b" "오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:"
+              MESSAGE_KEY="retrospect"
+              MSG=$'오늘도 돌아온 회고록 작성 시간입니다!\n해낸 점, 아쉬운 점, 앞으로의 계획을 적어보세요 :pencil:'
               return 0
             fi
 
@@ -141,29 +137,17 @@ jobs:
 
           init_state
 
-          if ! MSG="$(pick_due_message)"; then
+          if ! pick_due_message; then
             echo "No due message now. Exit without sending."
             exit 0
           fi
 
-          echo "Updating state files..."
-          git config user.name "maeulbot"
-          git config user.email "maeulbot@users.noreply.github.com"
+          echo "MESSAGE_KEY=$MESSAGE_KEY"
 
-          git add "$STATE_FILE" "$QUEUE_FILE" || true
-
-          if git diff --cached --quiet; then
-            echo "No state changes to commit."
-          else
-            git commit -m "chore: update bot state" || true
-            git pull --rebase origin "${GITHUB_REF_NAME}" || true
-            git push || true
-          fi
-
-          echo "Sending message..."
           export MSG
           PAYLOAD=$(python3 -c 'import json, os; print(json.dumps({"text": os.environ["MSG"], "username": "maeulbot"}))')
 
+          echo "Sending message..."
           HTTP_CODE=$(curl -sS -o response.txt -w "%{http_code}" \
             -X POST "${{ secrets.WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
@@ -173,5 +157,28 @@ jobs:
           cat response.txt || true
 
           if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+            echo "Webhook send failed. Do not mark as sent."
             exit 1
+          fi
+
+          # 전송 성공 후에만 상태 반영
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then
+            mark_sent_today "$MESSAGE_KEY"
+
+            if [ "$MESSAGE_KEY" = "stretch" ]; then
+              consume_stretch_index
+            fi
+
+            git config user.name "maeulbot"
+            git config user.email "maeulbot@users.noreply.github.com"
+
+            git add "$STATE_FILE" "$QUEUE_FILE" || true
+
+            if git diff --cached --quiet; then
+              echo "No state changes to commit."
+            else
+              git commit -m "chore: update bot state" || true
+              git pull --rebase origin "${GITHUB_REF_NAME}" || true
+              git push || true
+            fi
           fi
