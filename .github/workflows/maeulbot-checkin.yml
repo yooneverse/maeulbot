@@ -2,7 +2,7 @@ name: maeulbot-checkin
 
 on:
   schedule:
-    - cron: '50 23 * * 0-4'   # KST 08:50 월~금
+    - cron: '45 23 * * 0-4'   # KST 08:45 월~금
   workflow_dispatch:
 
 jobs:
