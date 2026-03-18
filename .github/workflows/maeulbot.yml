@@ -14,36 +14,54 @@ on:
     - cron: '45 23 * * 0-4'  # 입실 체크 08:45 KST
     - cron: '28 0  * * 1-5'  # 스크럼    09:28 KST
     - cron: '20 8  * * 1-5'  # 회고록    17:20 KST
+
 jobs:
   notify:
     name: 알림 발송
     runs-on: ubuntu-latest
     steps:
-      - name: Detect schedule and send notification
+      - name: 입실 체크 (scheduled)
+        if: github.event_name == 'schedule' && github.event.schedule == '45 23 * * 0-4'
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"text": " **입실 체크** 안녕하세요! 늦지 않게 입실 체크 부탁드립니다 :wave:"}'
+
+      - name: 스크럼 (scheduled)
+        if: github.event_name == 'schedule' && github.event.schedule == '28 0 * * 1-5'
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"text": " **스크럼 시간입니다!** 오늘 할 작업 내용을 공유해주세요 :speech_balloon:"}'
+
+      - name: 회고록 (scheduled)
+        if: github.event_name == 'schedule' && github.event.schedule == '20 8 * * 1-5'
+        env:
+          WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+        run: |
+          curl -s -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            -d '{"text": "**오늘도 돌아온 회고록 작성 시간입니다.** 잘한 점, 개선할 점, 해야할 일을 정리해 남겨주세요 :pencil:"}'
+
+      - name: 수동 테스트 (workflow_dispatch)
+        if: github.event_name == 'workflow_dispatch'
         env:
           WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
           TEST_INPUT: ${{ github.event.inputs.test_time }}
         run: |
-          if [ -n "$TEST_INPUT" ]; then
-            NOW="$TEST_INPUT"
-            echo "Manual trigger — test target: $NOW"
-          else
-            NOW=$(date -u +"%H:%M")
-            echo "Scheduled trigger — UTC time: $NOW"
-          fi
-          case "$NOW" in
-            "23:45"|"checkin")
-              MESSAGE=" **입실 체크** 안녕하세요! 늦지 않게 입실 체크 부탁드립니다 :wave:"
+          case "$TEST_INPUT" in
+            "checkin")
+              MESSAGE=" 안녕하세요! 늦지 않게 **입실 체크** 부탁드립니다 :wave:"
               ;;
-            "00:28"|"scrum")
+            "scrum")
               MESSAGE=" **스크럼 시간입니다!** 오늘 할 작업 내용을 공유해주세요 :speech_balloon:"
               ;;
-            "08:20"|"retrospective")
+            "retrospective")
               MESSAGE="**오늘도 돌아온 회고록 작성 시간입니다.** 잘한 점, 개선할 점, 해야할 일을 정리해 남겨주세요 :pencil:"
-              ;;
-            *)
-              echo "No matching schedule for $NOW — skip."
-              exit 0
               ;;
           esac
           HTTP_CODE=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
