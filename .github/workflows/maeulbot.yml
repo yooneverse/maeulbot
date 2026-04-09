@@ -86,7 +86,7 @@ jobs:
           elif [ "$LAST_SCRUM" != "1" ] && [[ "$HM_NOW" > "09:20" ]]; then
             SEND_TYPE="scrum"
             MESSAGE="**스크럼 시간입니다!** 오늘 할 작업 내용을 공유해주세요 :speech_balloon:"
-          elif [ "$LAST_RETRO" != "1" ] && [[ "$HM_NOW" > "17:15" ]]; then
+          elif [ "$LAST_RETRO" != "1" ] && [[ "$HM_NOW" > "17:10" ]]; then
             SEND_TYPE="retrospective"
             MESSAGE="**오늘도 돌아온 회고록 작성 시간입니다.** 잘한 점, 개선할 점, 해야할 일을 정리해 남겨주세요 :pencil:"
           else
