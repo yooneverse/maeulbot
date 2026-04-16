@@ -80,13 +80,13 @@ jobs:
 
           # 5분마다 도는 특성을 이용해 "지정 시각 이상이면 발송" 처리
           # 실행이 조금 늦어져도 아직 안 보냈으면 catch-up 가능
-          if [ "$LAST_CHECKIN" != "1" ] && [[ "$HM_NOW" > "08:50" ]]; then
+          if [ "$LAST_CHECKIN" != "1" ] && [[ "$HM_NOW" > "08:45" ]]; then
             SEND_TYPE="checkin"
-            MESSAGE="**입실 체크** 안녕하세요! 늦지 않게 입실 체크 부탁드립니다 :wave:"
-          elif [ "$LAST_SCRUM" != "1" ] && [[ "$HM_NOW" > "09:20" ]]; then
+            MESSAGE="안녕하세요! 늦지 않게 **입실 체크** 부탁드립니다 :wave:"
+          elif [ "$LAST_SCRUM" != "1" ] && [[ "$HM_NOW" > "09:15" ]]; then
             SEND_TYPE="scrum"
             MESSAGE="**스크럼 시간입니다!** 오늘 할 작업 내용을 공유해주세요 :speech_balloon:"
-          elif [ "$LAST_RETRO" != "1" ] && [[ "$HM_NOW" > "17:10" ]]; then
+          elif [ "$LAST_RETRO" != "1" ] && [[ "$HM_NOW" > "17:03" ]]; then
             SEND_TYPE="retrospective"
             MESSAGE="**오늘도 돌아온 회고록 작성 시간입니다.** 잘한 점, 개선할 점, 해야할 일을 정리해 남겨주세요 :pencil:"
           else
